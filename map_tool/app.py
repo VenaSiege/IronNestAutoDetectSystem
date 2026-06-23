@@ -22,7 +22,8 @@ class MapToolApp:
         """初始化主窗口和全部视图。"""
         self.root = tk.Tk()
         self.root.title("铁巢自动化侦察系统")
-        self.root.geometry("980x720")
+        self.root.geometry("1400x980")
+        self.root.minsize(1100, 760)
         default_font = font.nametofont("TkDefaultFont")
         default_font.configure(family="Microsoft YaHei UI", size=10)
         text_font = font.nametofont("TkTextFont")
@@ -35,6 +36,7 @@ class MapToolApp:
 
         self.status_var = tk.StringVar(value="就绪")
         self.view_mode = "main"
+        self._resize_after_id: Optional[str] = None
 
         self._build_menu()
         self._build_layout()
@@ -59,6 +61,7 @@ class MapToolApp:
         """创建主布局和视图容器。"""
         self.container = ttk.Frame(self.root, padding=12)
         self.container.pack(fill="both", expand=True)
+        self.container.bind("<Configure>", self._schedule_resize_refresh)
 
         self.main_map_view = MainMapView(
             self.container,
@@ -87,7 +90,7 @@ class MapToolApp:
         self.view_mode = "main"
         self.zoom_map_view.pack_forget()
         self.main_map_view.pack(fill="both", expand=True)
-        self.main_map_view.redraw()
+        self.root.after_idle(self.refresh_current_view)
         self.root.title("铁巢自动化侦察系统")
         self.set_status("大地图视图")
 
@@ -96,7 +99,9 @@ class MapToolApp:
         self.view_mode = "zoom"
         self.main_map_view.pack_forget()
         self.zoom_map_view.pack(fill="both", expand=True)
+        self.root.update_idletasks()
         self.zoom_map_view.set_big_cell(big_col, big_row)
+        self.root.after_idle(self.refresh_current_view)
         self.root.title(f"铁巢自动化侦察系统 - {big_col}{big_row}")
         self.set_status(f"{big_col}{big_row}")
 
@@ -104,6 +109,24 @@ class MapToolApp:
         """按当前模式刷新界面。"""
         self.main_map_view.redraw()
         self.zoom_map_view.redraw()
+
+    def refresh_current_view(self) -> None:
+        """刷新当前可见视图。"""
+        if self.view_mode == "main":
+            self.main_map_view.redraw()
+            return
+        self.zoom_map_view.redraw()
+
+    def _schedule_resize_refresh(self, _event: tk.Event) -> None:
+        """在窗口尺寸变化后延迟刷新视图。"""
+        if self._resize_after_id is not None:
+            self.root.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.root.after(80, self._handle_resize_refresh)
+
+    def _handle_resize_refresh(self) -> None:
+        """执行一次尺寸变化后的重绘。"""
+        self._resize_after_id = None
+        self.refresh_current_view()
 
     def handle_place_request(
         self,

@@ -20,8 +20,9 @@ MARKER_STYLES = {
 class ZoomMapView(ttk.Frame):
     """绘制大格放大后的小格地图。"""
 
-    CELL_SIZE = 52
-    PADDING = 38
+    FIXED_CELL_SIZE = 68
+    FIXED_AXIS_MARGIN = 44
+    FIXED_OUTER_PADDING = 20
 
     def __init__(
         self,
@@ -40,6 +41,14 @@ class ZoomMapView(ttk.Frame):
         self.on_clear_request = on_clear_request
         self.current_big_col = "A"
         self.current_big_row = 1
+        self.cell_size = self.FIXED_CELL_SIZE
+        self.grid_left = 60
+        self.grid_top = 60
+        self.axis_margin = self.FIXED_AXIS_MARGIN
+        self.outer_padding = self.FIXED_OUTER_PADDING
+        self.axis_font_size = 13
+        self.marker_font_size = 16
+        self._redraw_after_id: Optional[str] = None
 
         toolbar = ttk.Frame(self)
         toolbar.pack(fill="x", pady=(0, 6))
@@ -47,10 +56,9 @@ class ZoomMapView(ttk.Frame):
         ttk.Button(toolbar, text="返回大地图", command=on_back).pack(side="left")
         ttk.Label(toolbar, textvariable=self.title_var).pack(side="left", padx=(12, 0))
 
-        width = self.PADDING * 2 + len(SMALL_RANGE) * self.CELL_SIZE
-        height = self.PADDING * 2 + len(SMALL_RANGE) * self.CELL_SIZE
-        self.canvas = tk.Canvas(self, width=width, height=height, bg="white", highlightthickness=0)
+        self.canvas = tk.Canvas(self, bg="white", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", self._schedule_redraw)
         self.canvas.bind("<Button-3>", self._show_menu)
         self.canvas.bind("<Motion>", self._handle_motion)
         self.canvas.bind("<Leave>", lambda _event: self.on_hover(""))
@@ -74,17 +82,35 @@ class ZoomMapView(ttk.Frame):
 
     def redraw(self) -> None:
         """重绘当前大格的小格视图。"""
+        self._redraw_after_id = None
+        self._update_layout_metrics()
         self.canvas.delete("all")
         for value in SMALL_RANGE:
-            x = self.PADDING + value * self.CELL_SIZE
-            self.canvas.create_text(x + self.CELL_SIZE / 2, 18, text=str(value), font=("Microsoft YaHei UI", 10, "bold"))
+            x = self.grid_left + value * self.cell_size
+            self.canvas.create_text(
+                x + self.cell_size / 2,
+                self.grid_top - self.axis_margin / 2,
+                text=str(value),
+                font=("Microsoft YaHei UI", self.axis_font_size, "bold"),
+            )
 
         for row_index, small_y in enumerate(reversed(SMALL_RANGE)):
-            y = self.PADDING + row_index * self.CELL_SIZE
-            self.canvas.create_text(18, y + self.CELL_SIZE / 2, text=str(small_y), font=("Microsoft YaHei UI", 10, "bold"))
+            y = self.grid_top + row_index * self.cell_size
+            self.canvas.create_text(
+                self.grid_left - self.axis_margin / 2,
+                y + self.cell_size / 2,
+                text=str(small_y),
+                font=("Microsoft YaHei UI", self.axis_font_size, "bold"),
+            )
             for small_x in SMALL_RANGE:
-                x = self.PADDING + small_x * self.CELL_SIZE
-                self.canvas.create_rectangle(x, y, x + self.CELL_SIZE, y + self.CELL_SIZE, outline="#666666")
+                x = self.grid_left + small_x * self.cell_size
+                self.canvas.create_rectangle(
+                    x,
+                    y,
+                    x + self.cell_size,
+                    y + self.cell_size,
+                    outline="#666666",
+                )
                 marker = self.state.get_marker(
                     CellCoordinate(
                         big_col=self.current_big_col,
@@ -99,21 +125,23 @@ class ZoomMapView(ttk.Frame):
     def _draw_marker(self, x: int, y: int, marker: Marker) -> None:
         """在小格中绘制标识点。"""
         style = MARKER_STYLES[marker.type]
+        marker_margin = max(8, int(self.cell_size * 0.15))
+        marker_outline_width = max(2, int(self.cell_size * 0.04))
         self.canvas.create_oval(
-            x + 8,
-            y + 8,
-            x + self.CELL_SIZE - 8,
-            y + self.CELL_SIZE - 8,
+            x + marker_margin,
+            y + marker_margin,
+            x + self.cell_size - marker_margin,
+            y + self.cell_size - marker_margin,
             fill=style["fill"],
             outline=style["outline"],
-            width=2,
+            width=marker_outline_width,
         )
         self.canvas.create_text(
-            x + self.CELL_SIZE / 2,
-            y + self.CELL_SIZE / 2,
+            x + self.cell_size / 2,
+            y + self.cell_size / 2,
             text=marker_display_text(marker),
             fill=style["text"],
-            font=("Microsoft YaHei UI", 11, "bold"),
+            font=("Microsoft YaHei UI", self.marker_font_size, "bold"),
         )
 
     def _show_menu(self, event: tk.Event) -> None:
@@ -156,12 +184,13 @@ class ZoomMapView(ttk.Frame):
 
     def _locate_small_cell(self, x: int, y: int) -> CellCoordinate | None:
         """将画布坐标转换为小格坐标。"""
-        inner_x = x - self.PADDING
-        inner_y = y - self.PADDING
+        self._update_layout_metrics()
+        inner_x = x - self.grid_left
+        inner_y = y - self.grid_top
         if inner_x < 0 or inner_y < 0:
             return None
-        col_index = inner_x // self.CELL_SIZE
-        row_index = inner_y // self.CELL_SIZE
+        col_index = inner_x // self.cell_size
+        row_index = inner_y // self.cell_size
         if col_index >= len(SMALL_RANGE) or row_index >= len(SMALL_RANGE):
             return None
         small_x = int(col_index)
@@ -172,3 +201,31 @@ class ZoomMapView(ttk.Frame):
             small_x=small_x,
             small_y=small_y,
         )
+
+    def _update_layout_metrics(self) -> None:
+        """使用固定尺寸更新小格视图布局。"""
+        canvas_width = max(self.canvas.winfo_width(), 420)
+        canvas_height = max(self.canvas.winfo_height(), 420)
+        self.cell_size = self.FIXED_CELL_SIZE
+        self.axis_margin = self.FIXED_AXIS_MARGIN
+        self.outer_padding = self.FIXED_OUTER_PADDING
+        grid_width = self.cell_size * len(SMALL_RANGE)
+        grid_height = self.cell_size * len(SMALL_RANGE)
+        content_width = grid_width + self.axis_margin
+        content_height = grid_height + self.axis_margin
+
+        offset_x = max(self.outer_padding, int((canvas_width - content_width) / 2))
+        offset_y = max(self.outer_padding, int((canvas_height - content_height) / 2))
+        self.grid_left = offset_x + self.axis_margin
+        self.grid_top = offset_y + self.axis_margin
+
+        self.axis_font_size = 13
+        self.marker_font_size = 16
+
+    def _schedule_redraw(self, _event: tk.Event) -> None:
+        """在画布尺寸稳定后补一次重绘。"""
+        if not self.winfo_ismapped():
+            return
+        if self._redraw_after_id is not None:
+            self.after_cancel(self._redraw_after_id)
+        self._redraw_after_id = self.after(10, self.redraw)
