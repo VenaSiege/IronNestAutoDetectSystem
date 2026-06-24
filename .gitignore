@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 venv/
 env/
+build-venv/
 
 # 本地工具与编辑器文件
 .idea/
@@ -15,3 +16,12 @@ env/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 打包文件
+dist/
+build/
+main.spec
+.agents/
+
+# 文档
+docs/
