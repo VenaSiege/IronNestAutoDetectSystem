@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
+from map_tool.geometry import enemy_marker_relation_text
 from map_tool.models import SMALL_RANGE, CellCoordinate, Marker, marker_display_text
 from map_tool.state import MapState
 
@@ -84,6 +85,10 @@ class ZoomMapView(ttk.Frame):
         """重绘当前大格的小格视图。"""
         self._redraw_after_id = None
         self._update_layout_metrics()
+        local_markers = {
+            (marker.small_x, marker.small_y): marker
+            for marker in self.state.markers_in_big_cell(self.current_big_col, self.current_big_row)
+        }
         self.canvas.delete("all")
         for value in SMALL_RANGE:
             x = self.grid_left + value * self.cell_size
@@ -111,14 +116,7 @@ class ZoomMapView(ttk.Frame):
                     y + self.cell_size,
                     outline="#666666",
                 )
-                marker = self.state.get_marker(
-                    CellCoordinate(
-                        big_col=self.current_big_col,
-                        big_row=self.current_big_row,
-                        small_x=small_x,
-                        small_y=small_y,
-                    )
-                )
+                marker = local_markers.get((small_x, small_y))
                 if marker is not None:
                     self._draw_marker(x, y, marker)
 
@@ -164,6 +162,9 @@ class ZoomMapView(ttk.Frame):
             marker_text = f" / {marker_display_text(marker)}"
             if marker.type == "enemy_target" and marker.name:
                 marker_text += f"({marker.name})"
+            relation_text = enemy_marker_relation_text(marker, self.state.find_iron_nest())
+            if relation_text:
+                marker_text += f" / {relation_text}"
         self.on_hover(
             f"{coordinate.big_col}{coordinate.big_row} / {coordinate.small_x}:{coordinate.small_y}{marker_text}"
         )

@@ -39,6 +39,8 @@ class MapToolApp:
         self.status_var = tk.StringVar(value="就绪")
         self.view_mode = "main"
         self._resize_after_id: Optional[str] = None
+        self._main_view_dirty = True
+        self._zoom_view_dirty = True
 
         self._build_menu()
         self._build_layout()
@@ -96,7 +98,8 @@ class MapToolApp:
         self.view_mode = "main"
         self.zoom_map_view.pack_forget()
         self.main_map_view.pack(fill="both", expand=True)
-        self.root.after_idle(self.refresh_current_view)
+        if self._main_view_dirty:
+            self.root.after_idle(self.refresh_current_view)
         self.root.title("铁巢自动化侦察系统")
         self.set_status("大地图视图")
 
@@ -107,7 +110,8 @@ class MapToolApp:
         self.zoom_map_view.pack(fill="both", expand=True)
         self.root.update_idletasks()
         self.zoom_map_view.set_big_cell(big_col, big_row)
-        self.root.after_idle(self.refresh_current_view)
+        if self._zoom_view_dirty:
+            self.root.after_idle(self.refresh_current_view)
         self.root.title(f"铁巢自动化侦察系统 - {big_col}{big_row}")
         self.set_status(f"{big_col}{big_row}")
 
@@ -120,8 +124,10 @@ class MapToolApp:
         """刷新当前可见视图。"""
         if self.view_mode == "main":
             self.main_map_view.redraw()
+            self._main_view_dirty = False
             return
         self.zoom_map_view.redraw()
+        self._zoom_view_dirty = False
 
     def _schedule_resize_refresh(self, _event: tk.Event) -> None:
         """在窗口尺寸变化后延迟刷新视图。"""
@@ -173,14 +179,15 @@ class MapToolApp:
             messagebox.showinfo("清除标识", "当前小格没有标识可清除。", parent=self.root)
             return
         self.state.remove_marker(coordinate)
-        self.refresh_views()
+        self._mark_views_dirty()
+        self.refresh_current_view()
         self.set_status(f"已清除 {coordinate.big_col}{coordinate.big_row} / {coordinate.small_x}:{coordinate.small_y}")
 
     def new_map(self) -> None:
         """新建空地图。"""
         self.state.clear()
         self.current_file_path = None
-        self.refresh_views()
+        self._mark_views_dirty()
         self.show_main_map()
         self.set_status("已新建空地图")
 
@@ -202,11 +209,8 @@ class MapToolApp:
             return
 
         self.current_file_path = file_path
-        self.refresh_views()
-        if self.view_mode == "main":
-            self.show_main_map()
-        else:
-            self.zoom_map_view.redraw()
+        self._mark_views_dirty()
+        self.refresh_current_view()
         self.set_status(f"已打开 {Path(file_path).name}")
 
     def save_map(self) -> None:
@@ -251,16 +255,16 @@ class MapToolApp:
 
     def open_calculation_dialog(self) -> None:
         """打开目标定位计算弹窗。"""
-        origin_markers = [
-            marker
-            for marker in self.state.all_markers()
-            if marker.type in {"observation", "reference"}
-        ]
-        observation_markers = [
-            marker
-            for marker in self.state.all_markers()
-            if marker.type == "observation"
-        ]
+        origin_markers: list[Marker] = []
+        observation_markers: list[Marker] = []
+        iron_nest_marker = None
+        for marker in self.state.all_markers():
+            if marker.type in {"observation", "reference"}:
+                origin_markers.append(marker)
+            if marker.type == "observation":
+                observation_markers.append(marker)
+            elif marker.type == "iron_nest":
+                iron_nest_marker = marker
         if not origin_markers:
             messagebox.showinfo("目标定位计算", "至少需要先放置一个观测点或参考点。", parent=self.root)
             return
@@ -270,7 +274,7 @@ class MapToolApp:
             self.root,
             origin_markers=origin_markers,
             observation_markers=observation_markers,
-            iron_nest_marker=self.state.find_iron_nest(),
+            iron_nest_marker=iron_nest_marker,
             on_apply=self.apply_calculation_selection,
         )
         dialog.wait_window()
@@ -322,5 +326,11 @@ class MapToolApp:
         except ValueError as error:
             messagebox.showerror("放置失败", str(error), parent=self.root)
             return None
-        self.refresh_views()
+        self._mark_views_dirty()
+        self.refresh_current_view()
         return result
+
+    def _mark_views_dirty(self) -> None:
+        """标记两个视图都需要刷新。"""
+        self._main_view_dirty = True
+        self._zoom_view_dirty = True

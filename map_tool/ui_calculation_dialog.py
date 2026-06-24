@@ -226,39 +226,44 @@ class CalculationDialog(tk.Toplevel):
         """按当前模式构建候选结果。"""
         mode = self.mode_var.get()
         origin_a = self._get_origin_marker(self.origin_a_var.get(), reference_mode=(mode == "reference"))
+        origin_a_point = marker_to_plane_point(origin_a)
+        iron_point = None if self.iron_nest_marker is None else marker_to_plane_point(self.iron_nest_marker)
         candidates: list[PlanePoint]
 
         if mode == "triangle":
             origin_b = self._get_origin_marker(self.origin_b_var.get())
+            origin_b_point = marker_to_plane_point(origin_b)
             self._validate_distinct_origins(origin_a, origin_b)
             candidates = intersect_bearings(
-                marker_to_plane_point(origin_a),
+                origin_a_point,
                 float(self.angle_a_var.get()),
-                marker_to_plane_point(origin_b),
+                origin_b_point,
                 float(self.angle_b_var.get()),
             )
         elif mode == "circle":
             origin_b = self._get_origin_marker(self.origin_b_var.get())
+            origin_b_point = marker_to_plane_point(origin_b)
             self._validate_distinct_origins(origin_a, origin_b)
             candidates = intersect_circles(
-                marker_to_plane_point(origin_a),
+                origin_a_point,
                 float(self.distance_a_var.get()),
-                marker_to_plane_point(origin_b),
+                origin_b_point,
                 float(self.distance_b_var.get()),
             )
         elif mode == "mixed":
             origin_b = self._get_origin_marker(self.origin_b_var.get())
+            origin_b_point = marker_to_plane_point(origin_b)
             self._validate_distinct_origins(origin_a, origin_b)
             candidates = intersect_bearing_circle(
-                marker_to_plane_point(origin_a),
+                origin_a_point,
                 float(self.angle_a_var.get()),
-                marker_to_plane_point(origin_b),
+                origin_b_point,
                 float(self.distance_b_var.get()),
             )
         elif mode == "reference":
             candidates = [
                 project_reference_point(
-                    marker_to_plane_point(origin_a),
+                    origin_a_point,
                     float(self.angle_a_var.get()),
                     float(self.distance_a_var.get()),
                 )
@@ -274,8 +279,7 @@ class CalculationDialog(tk.Toplevel):
             big_label, small_label = coordinate_labels(coordinate)
             distance_value = None
             bearing_value = None
-            if self.iron_nest_marker is not None and mode != "reference":
-                iron_point = marker_to_plane_point(self.iron_nest_marker)
+            if iron_point is not None and mode != "reference":
                 distance_value = distance_km(iron_point, point)
                 bearing_value = bearing_deg(iron_point, point)
             normalized.append(

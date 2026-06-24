@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 
+from map_tool.geometry import enemy_marker_relation_text
 from map_tool.models import BIG_COLS, BIG_ROWS, Marker, marker_detail_text, marker_summary_text
 from map_tool.state import MapState
 
@@ -37,11 +38,13 @@ class MainMapView(ttk.Frame):
         self.summary_font_size = 8
         self.axis_font_size = 10
         self.summary_line_height = 10
+        self._last_hover_cell: tuple[str, int] | None = None
+        self._last_hover_text = ""
         self.canvas = tk.Canvas(self, bg="white", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Button-1>", self._handle_left_click)
         self.canvas.bind("<Motion>", self._handle_motion)
-        self.canvas.bind("<Leave>", lambda _event: self.on_hover(""))
+        self.canvas.bind("<Leave>", self._handle_leave)
 
     def redraw(self) -> None:
         """重绘整个大地图。"""
@@ -88,15 +91,26 @@ class MainMapView(ttk.Frame):
         """更新鼠标悬停信息。"""
         result = self._locate_big_cell(event.x, event.y)
         if result is None:
+            self._last_hover_cell = None
+            self._last_hover_text = ""
             self.on_hover("")
+            return
+        if result == self._last_hover_cell:
+            if self._last_hover_text:
+                self.on_hover(self._last_hover_text)
             return
         big_col, big_row = result
         markers = self._sorted_markers(self.state.markers_in_big_cell(big_col, big_row))
         if not markers:
-            self.on_hover(f"{big_col}{big_row}")
+            self._last_hover_cell = result
+            self._last_hover_text = f"{big_col}{big_row}"
+            self.on_hover(self._last_hover_text)
             return
-        details = " / ".join(marker_detail_text(marker) for marker in markers)
-        self.on_hover(f"{big_col}{big_row} / {details}")
+        iron_nest_marker = self.state.find_iron_nest()
+        details = " / ".join(self._marker_hover_text(marker, iron_nest_marker) for marker in markers)
+        self._last_hover_cell = result
+        self._last_hover_text = f"{big_col}{big_row} / {details}"
+        self.on_hover(self._last_hover_text)
 
     def _locate_big_cell(self, x: int, y: int) -> tuple[str, int] | None:
         """将画布坐标转换为大格坐标。"""
@@ -191,3 +205,17 @@ class MainMapView(ttk.Frame):
         self.axis_font_size = max(10, min(16, int(self.cell_size * 0.28)))
         self.summary_font_size = max(8, min(14, int(self.cell_size * 0.20)))
         self.summary_line_height = max(self.summary_font_size + 1, int(self.cell_size * 0.21))
+
+    def _handle_leave(self, _event: tk.Event) -> None:
+        """处理鼠标离开画布。"""
+        self._last_hover_cell = None
+        self._last_hover_text = ""
+        self.on_hover("")
+
+    def _marker_hover_text(self, marker: Marker, iron_nest_marker: Marker | None) -> str:
+        """生成大地图悬停时的标识文本。"""
+        detail_text = marker_detail_text(marker)
+        relation_text = enemy_marker_relation_text(marker, iron_nest_marker)
+        if relation_text:
+            return f"{detail_text}({relation_text})"
+        return detail_text

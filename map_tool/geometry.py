@@ -12,6 +12,9 @@ SMALL_CELL_KM = 0.1
 SMALL_CELLS_PER_BIG = 10
 MAP_WIDTH_KM = len(BIG_COLS) * BIG_CELL_KM
 MAP_HEIGHT_KM = len(BIG_ROWS) * BIG_CELL_KM
+MAX_SMALL_COL_INDEX = len(BIG_COLS) * SMALL_CELLS_PER_BIG - 1
+MAX_SMALL_ROW_INDEX = len(BIG_ROWS) * SMALL_CELLS_PER_BIG - 1
+BIG_COL_INDEX = {col: index for index, col in enumerate(BIG_COLS)}
 EPSILON = 1e-9
 
 
@@ -50,7 +53,7 @@ class CalculationCandidate:
 
 def marker_to_plane_point(marker: Marker) -> PlanePoint:
     """把标识点中心换算为连续平面坐标。"""
-    big_col_index = BIG_COLS.index(marker.big_col)
+    big_col_index = BIG_COL_INDEX[marker.big_col]
     x_km = ((big_col_index * SMALL_CELLS_PER_BIG) + marker.small_x + 0.5) * SMALL_CELL_KM
     y_km = (((marker.big_row - 1) * SMALL_CELLS_PER_BIG) + marker.small_y + 0.5) * SMALL_CELL_KM
     return PlanePoint(x_km=x_km, y_km=y_km)
@@ -69,8 +72,8 @@ def plane_point_to_nearest_cell(point: PlanePoint) -> CellCoordinate:
     small_col_index = round((point.x_km / SMALL_CELL_KM) - 0.5)
     small_row_index = round((point.y_km / SMALL_CELL_KM) - 0.5)
 
-    small_col_index = min(max(small_col_index, 0), len(BIG_COLS) * SMALL_CELLS_PER_BIG - 1)
-    small_row_index = min(max(small_row_index, 0), len(BIG_ROWS) * SMALL_CELLS_PER_BIG - 1)
+    small_col_index = min(max(small_col_index, 0), MAX_SMALL_COL_INDEX)
+    small_row_index = min(max(small_row_index, 0), MAX_SMALL_ROW_INDEX)
 
     big_col = BIG_COLS[small_col_index // SMALL_CELLS_PER_BIG]
     big_row = (small_row_index // SMALL_CELLS_PER_BIG) + 1
@@ -214,3 +217,15 @@ def project_reference_point(origin: PlanePoint, theta_deg: float, distance_value
 def marker_choice_text(marker: Marker) -> str:
     """生成下拉选择中的标识文本。"""
     return f"{marker_detail_text(marker)} @ {marker.big_col}{marker.big_row} / {marker.small_x}:{marker.small_y}"
+
+
+def enemy_marker_relation_text(marker: Marker, iron_nest_marker: Marker | None) -> str:
+    """生成敌军目标点相对铁巢的距离和方位角文本。"""
+    if marker.type != "enemy_target" or iron_nest_marker is None:
+        return ""
+    iron_point = marker_to_plane_point(iron_nest_marker)
+    marker_point = marker_to_plane_point(marker)
+    return (
+        f"距铁巢{distance_km(iron_point, marker_point):.2f}km"
+        f" / 铁巢方位角{bearing_deg(iron_point, marker_point):.1f}°"
+    )

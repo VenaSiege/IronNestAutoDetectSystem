@@ -30,10 +30,21 @@ class MapState:
     def __init__(self) -> None:
         """初始化空地图。"""
         self._markers: dict[tuple[str, int, int, int], Marker] = {}
+        self._markers_by_big_cell: dict[tuple[str, int], list[Marker]] = {}
+        self._labels_by_type: dict[str, set[str]] = {
+            "observation": set(),
+            "reference": set(),
+            "enemy_target": set(),
+        }
+        self._iron_nest_key: tuple[str, int, int, int] | None = None
 
     def clear(self) -> None:
         """清空全部标识点。"""
         self._markers.clear()
+        self._markers_by_big_cell.clear()
+        for labels in self._labels_by_type.values():
+            labels.clear()
+        self._iron_nest_key = None
 
     def all_markers(self) -> list[Marker]:
         """返回全部标识点。"""
@@ -48,45 +59,53 @@ class MapState:
         new_state = MapState()
         for marker in markers:
             new_state._validate_marker(marker)
-            existing = new_state.get_marker(marker.coordinate())
-            if existing is not None:
+            coordinate = marker.coordinate()
+            if new_state.get_marker(coordinate) is not None:
                 raise ValueError("加载失败：同一小格存在多个标识。")
-            if marker.type == "iron_nest" and new_state.find_iron_nest() is not None:
+            if marker.type == "iron_nest" and new_state._iron_nest_key is not None:
                 raise ValueError("加载失败：铁巢只能存在一个。")
-            if marker.type == "observation" and new_state.is_label_taken("observation", marker.label):
+            if marker.type == "observation" and marker.label in new_state._labels_by_type["observation"]:
                 raise ValueError("加载失败：观测点编号重复。")
-            if marker.type == "reference" and new_state.is_label_taken("reference", marker.label):
+            if marker.type == "reference" and marker.label in new_state._labels_by_type["reference"]:
                 raise ValueError("加载失败：参考点编号重复。")
-            if marker.type == "enemy_target" and new_state.is_label_taken("enemy_target", marker.label):
+            if marker.type == "enemy_target" and marker.label in new_state._labels_by_type["enemy_target"]:
                 raise ValueError("加载失败：敌军目标点编号重复。")
-            new_state._markers[marker.coordinate().to_key()] = marker
+            new_state._add_marker(marker)
         self._markers = new_state._markers
+        self._markers_by_big_cell = new_state._markers_by_big_cell
+        self._labels_by_type = new_state._labels_by_type
+        self._iron_nest_key = new_state._iron_nest_key
 
     def remove_marker(self, coordinate: CellCoordinate) -> Optional[Marker]:
         """删除指定小格的标识点。"""
-        return self._markers.pop(coordinate.to_key(), None)
+        marker = self._markers.pop(coordinate.to_key(), None)
+        if marker is None:
+            return None
+        big_cell_key = (marker.big_col, marker.big_row)
+        markers = self._markers_by_big_cell.get(big_cell_key)
+        if markers is not None:
+            markers[:] = [item for item in markers if item.coordinate().to_key() != coordinate.to_key()]
+            if not markers:
+                del self._markers_by_big_cell[big_cell_key]
+        if marker.type in self._labels_by_type:
+            self._labels_by_type[marker.type].discard(marker.label)
+        if marker.type == "iron_nest" and self._iron_nest_key == coordinate.to_key():
+            self._iron_nest_key = None
+        return marker
 
     def find_iron_nest(self) -> Optional[Marker]:
         """查找当前铁巢。"""
-        for marker in self._markers.values():
-            if marker.type == "iron_nest":
-                return marker
-        return None
+        if self._iron_nest_key is None:
+            return None
+        return self._markers.get(self._iron_nest_key)
 
     def markers_in_big_cell(self, big_col: str, big_row: int) -> list[Marker]:
         """获取某个大格内的全部标识点。"""
-        return [
-            marker
-            for marker in self._markers.values()
-            if marker.big_col == big_col and marker.big_row == big_row
-        ]
+        return list(self._markers_by_big_cell.get((big_col, big_row), []))
 
     def is_label_taken(self, marker_type: str, label: str) -> bool:
         """检查某类编号是否已被占用。"""
-        return any(
-            marker.type == marker_type and marker.label == label
-            for marker in self._markers.values()
-        )
+        return label in self._labels_by_type.get(marker_type, set())
 
     def next_label(self, marker_type: str) -> Optional[str]:
         """分配当前最小未使用编号。"""
@@ -97,8 +116,9 @@ class MapState:
         else:
             return None
 
+        taken_labels = self._labels_by_type.get(marker_type, set())
         for label in candidates:
-            if not self.is_label_taken(marker_type, label):
+            if label not in taken_labels:
                 return label
         return None
 
@@ -138,7 +158,7 @@ class MapState:
             name=name,
         )
         self._validate_marker(marker)
-        self._markers[coordinate.to_key()] = marker
+        self._add_marker(marker)
         return PlaceResult(
             marker=marker,
             replaced_marker=replaced_marker,
@@ -165,3 +185,14 @@ class MapState:
             raise ValueError("参考点编号非法。")
         if marker.type in {"observation", "enemy_target"} and marker.label not in NUMBER_LABELS:
             raise ValueError("数字编号非法。")
+
+    def _add_marker(self, marker: Marker) -> None:
+        """把标识点写入主存储和索引。"""
+        coordinate_key = marker.coordinate().to_key()
+        self._markers[coordinate_key] = marker
+        big_cell_key = (marker.big_col, marker.big_row)
+        self._markers_by_big_cell.setdefault(big_cell_key, []).append(marker)
+        if marker.type in self._labels_by_type:
+            self._labels_by_type[marker.type].add(marker.label)
+        if marker.type == "iron_nest":
+            self._iron_nest_key = coordinate_key
