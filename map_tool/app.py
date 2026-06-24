@@ -8,9 +8,11 @@ from tkinter import font
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
+from map_tool.geometry import marker_choice_text
 from map_tool.models import CellCoordinate, Marker
 from map_tool.state import MapState
 from map_tool.storage import load_markers, save_markers
+from map_tool.ui_calculation_dialog import CalculationDialog, CalculationSelection
 from map_tool.ui_main_map import MainMapView
 from map_tool.ui_zoom_map import ZoomMapView
 
@@ -55,6 +57,10 @@ class MapToolApp:
         file_menu.add_command(label="保存", command=self.save_map)
         file_menu.add_command(label="另存为", command=self.save_map_as)
         menu_bar.add_cascade(label="文件", menu=file_menu)
+
+        calc_menu = tk.Menu(menu_bar, tearoff=False)
+        calc_menu.add_command(label="目标定位计算", command=self.open_calculation_dialog)
+        menu_bar.add_cascade(label="计算", menu=calc_menu)
         self.root.config(menu=menu_bar)
 
     def _build_layout(self) -> None:
@@ -152,13 +158,10 @@ class MapToolApp:
                 return
             name = name.strip()
 
-        try:
-            result = self.state.place_marker(marker_type, coordinate, name=name)
-        except ValueError as error:
-            messagebox.showerror("放置失败", str(error), parent=self.root)
+        result = self._place_marker_and_refresh(coordinate, marker_type, name=name)
+        if result is None:
             return
 
-        self.refresh_views()
         if result.removed_iron_nest is not None:
             self.set_status(f"铁巢已移动到 {coordinate.big_col}{coordinate.big_row} / {coordinate.small_x}:{coordinate.small_y}")
         else:
@@ -245,3 +248,79 @@ class MapToolApp:
             "enemy_target": "敌军目标点",
         }
         return names.get(marker_type, marker_type)
+
+    def open_calculation_dialog(self) -> None:
+        """打开目标定位计算弹窗。"""
+        origin_markers = [
+            marker
+            for marker in self.state.all_markers()
+            if marker.type in {"observation", "reference"}
+        ]
+        observation_markers = [
+            marker
+            for marker in self.state.all_markers()
+            if marker.type == "observation"
+        ]
+        if not origin_markers:
+            messagebox.showinfo("目标定位计算", "至少需要先放置一个观测点或参考点。", parent=self.root)
+            return
+        if not observation_markers:
+            messagebox.showinfo("目标定位计算", "参考点自动计算至少需要一个观测点。", parent=self.root)
+        dialog = CalculationDialog(
+            self.root,
+            origin_markers=origin_markers,
+            observation_markers=observation_markers,
+            iron_nest_marker=self.state.find_iron_nest(),
+            on_apply=self.apply_calculation_selection,
+        )
+        dialog.wait_window()
+
+    def apply_calculation_selection(self, selection: CalculationSelection) -> None:
+        """把计算结果写回为正式标识点。"""
+        coordinate = selection.candidate.coordinate
+        existing = self.state.get_marker(coordinate)
+        target_type = "reference" if selection.mode == "reference" else "enemy_target"
+        if existing is not None:
+            marker_name = marker_choice_text(existing)
+            confirm = messagebox.askyesno(
+                "覆盖确认",
+                f"目标小格已有标识“{marker_name}”，是否覆盖？",
+                parent=self.root,
+            )
+            if not confirm:
+                return
+
+        result = self._place_marker_and_refresh(coordinate, target_type, selection.name)
+        if result is None:
+            return
+
+        if selection.mode == "reference":
+            self.set_status(
+                f"已生成参考点 {selection.candidate.big_label} / {selection.candidate.small_label}"
+            )
+            return
+
+        distance_text = ""
+        if selection.candidate.distance_to_iron_nest_km is not None and selection.candidate.bearing_from_iron_nest_deg is not None:
+            distance_text = (
+                f" / 距铁巢{selection.candidate.distance_to_iron_nest_km:.2f}km"
+                f" / 铁巢方位角{selection.candidate.bearing_from_iron_nest_deg:.1f}°"
+            )
+        self.set_status(
+            f"已生成敌军目标点 {selection.candidate.big_label} / {selection.candidate.small_label}{distance_text}"
+        )
+
+    def _place_marker_and_refresh(
+        self,
+        coordinate: CellCoordinate,
+        marker_type: str,
+        name: str = "",
+    ):
+        """执行放置并统一刷新界面。"""
+        try:
+            result = self.state.place_marker(marker_type, coordinate, name=name)
+        except ValueError as error:
+            messagebox.showerror("放置失败", str(error), parent=self.root)
+            return None
+        self.refresh_views()
+        return result
